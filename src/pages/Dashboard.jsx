@@ -99,6 +99,12 @@ const Dashboard = () => {
           <p className="text-gray-500 text-sm">Hospital System: General Metro • Status: <span className="text-green-500 animate-pulse">OPTIMAL</span></p>
         </div>
         <div className="flex gap-4">
+            <Link to="/weather" className="px-4 py-2 bg-orange-500/10 border border-orange-500/50 text-orange-400 rounded hover:bg-orange-500 hover:text-white transition-colors text-sm font-mono flex items-center gap-2">
+              <Activity size={16} /> WEATHER SURGE
+            </Link>
+            <Link to="/patient" className="px-4 py-2 bg-green-500/10 border border-green-500/50 text-green-400 rounded hover:bg-green-500 hover:text-white transition-colors text-sm font-mono flex items-center gap-2">
+              <Users size={16} /> PATIENT PORTAL
+            </Link>
             <button className="px-4 py-2 border border-white/20 rounded hover:bg-white hover:text-black transition-colors text-sm font-mono">
               GENERATE REPORT
             </button>
