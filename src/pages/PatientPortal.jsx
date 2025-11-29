@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import gsap from 'gsap';
+import Vapi from '@vapi-ai/web';
 import { Phone, Mic, MapPin, ShieldAlert, Activity, Navigation, X, Bell, Home, User, Settings, Grip } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
@@ -54,6 +55,19 @@ const VoiceWave = ({ active }) => (
 );
 
 // --- MAIN COMPONENT ---
+// PatientPortal - Emergency Response System with AI Voice Triage
+// 
+// FLOW:
+// 1. User presses SOS button
+// 2. Vapi AI Agent starts voice conversation (speaks + listens)
+// 3. AI asks questions about emergency and gathers information
+// 4. Conversation continues until AI has all needed details
+// 5. User or AI ends call → Emergency services dispatched
+//
+// The AI agent has prompts to conduct thorough triage conversations
+// and won't end the call until it has complete emergency information.
+// ========================================================================
+
 const PatientPortal = () => {
   const [isAppLaunched, setIsAppLaunched] = useState(false);
   const [status, setStatus] = useState('idle'); // idle, listening, processing, dispatched
@@ -63,11 +77,52 @@ const PatientPortal = () => {
   const [webhookStatus, setWebhookStatus] = useState(''); // For debugging
   const [isListening, setIsListening] = useState(false);
   const [userSpeech, setUserSpeech] = useState('');
+  const [vapiCallStatus, setVapiCallStatus] = useState(''); // Vapi call status
   const appRef = useRef(null);
   const recognitionRef = useRef(null);
+  const vapiRef = useRef(null);
+  const activeCallRef = useRef(null); // Store the active call instance
+
+  // Vapi AI Configuration
+  // Get your Public Key from: https://dashboard.vapi.ai/settings
+  // NOTE: Public Key is different from Assistant ID!
+  const VAPI_PUBLIC_KEY = import.meta.env.VITE_VAPI_PUBLIC_KEY || '4193d057-856a-4c00-b6de-903456050653';
+  const VAPI_ASSISTANT_ID = import.meta.env.VITE_VAPI_ASSISTANT_ID || '4193d057-856a-4c00-b6de-903456050653';
+
+  // Show setup status immediately
+  useEffect(() => {
+    if (VAPI_PUBLIC_KEY === 'your_public_key_here' || VAPI_PUBLIC_KEY === VAPI_ASSISTANT_ID) {
+      console.warn('\n' + '⚠️ '.repeat(15));
+      console.warn('🚨 VAPI SETUP INCOMPLETE!');
+      console.warn('📋 TO DO:');
+      console.warn('  1. Visit: https://dashboard.vapi.ai/settings');
+      console.warn('  2. Copy your Public Key (Web SDK Key)');
+      console.warn('  3. Update .env: VITE_VAPI_PUBLIC_KEY=<your_key>');
+      console.warn('  4. Run: npm run dev');
+      console.warn('⚠️ '.repeat(15) + '\n');
+    }
+  }, []);
 
   // Get patient's location on component mount
   useEffect(() => {
+    // Initialize Vapi Client (event listeners will be on call instance)
+    try {
+      vapiRef.current = new Vapi(VAPI_PUBLIC_KEY);
+      console.log('✅ Vapi client initialized');
+      console.log('📋 Using credentials:', {
+        publicKey: VAPI_PUBLIC_KEY?.substring(0, 20) + '...',
+        assistantId: VAPI_ASSISTANT_ID?.substring(0, 20) + '...',
+        isPlaceholder: VAPI_PUBLIC_KEY === 'your_public_key_here' || VAPI_PUBLIC_KEY === '4193d057-856a-4c00-b6de-903456050653'
+      });
+      
+      if (VAPI_PUBLIC_KEY === 'your_public_key_here') {
+        console.error('⚠️ VAPI_PUBLIC_KEY is still set to placeholder!');
+        console.error('🔧 Update .env file with your actual Vapi Public Key from https://dashboard.vapi.ai/');
+      }
+    } catch (error) {
+      console.error('Failed to initialize Vapi:', error);
+    }
+
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
@@ -92,20 +147,31 @@ const PatientPortal = () => {
     if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.continuous = false;
-      recognitionRef.current.interimResults = false;
+      recognitionRef.current.continuous = true; // Keep listening
+      recognitionRef.current.interimResults = true; // Show interim results
       recognitionRef.current.lang = 'en-US';
 
       recognitionRef.current.onresult = (event) => {
-        const speechResult = event.results[0][0].transcript;
-        console.log('🎤 User said:', speechResult);
-        setUserSpeech(speechResult);
-        setTranscript(`User: ${speechResult}`);
-        
-        // Analyze the speech and proceed
-        setTimeout(() => {
-          analyzeEmergency(speechResult);
-        }, 1000);
+        // Get all results (interim + final)
+        let interimTranscript = '';
+        let finalTranscript = '';
+
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            finalTranscript += transcript + ' ';
+          } else {
+            interimTranscript += transcript;
+          }
+        }
+
+        // Update display with what's being said
+        const currentSpeech = (finalTranscript + interimTranscript).trim();
+        if (currentSpeech) {
+          setUserSpeech(currentSpeech);
+          setTranscript(`You're saying: "${currentSpeech}"`);
+          console.log('🎤 Current speech:', currentSpeech);
+        }
       };
 
       recognitionRef.current.onerror = (event) => {
@@ -120,6 +186,14 @@ const PatientPortal = () => {
     } else {
       console.warn('Speech recognition not supported in this browser');
     }
+
+    // Cleanup Vapi on unmount
+    return () => {
+      if (activeCallRef.current) {
+        activeCallRef.current.stop();
+        activeCallRef.current = null;
+      }
+    };
   }, []);
 
   // App Launch Animation
@@ -136,7 +210,12 @@ const PatientPortal = () => {
     }
   }, [isAppLaunched]);
 
-  // Analyze emergency from user speech
+  // ========================================================================
+  // LEGACY FUNCTIONS (Now using Vapi AI for direct voice conversation)
+  // These are kept as fallback but main flow is through startVapiConversation
+  // ========================================================================
+
+  // Analyze emergency from user speech (LEGACY - not used in main flow)
   const analyzeEmergency = async (speechText) => {
     setStatus('processing');
     setTranscript('AI: Analyzing your emergency...');
@@ -199,71 +278,263 @@ const PatientPortal = () => {
     setTimeout(() => setStatus('dispatched'), 2000);
   };
 
-  // Send emergency data to hospital via AI calling agent (webhook to be added later)
+  // Send emergency data to hospital via AI calling agent
   const sendEmergencyToHospital = async (emergencyData) => {
-    // TODO: Add AI calling agent webhook URL here
-    const webhookUrl = ''; // To be configured later
-    
     console.log('🚨 EMERGENCY DATA PREPARED:', emergencyData);
-    setWebhookStatus('Emergency prepared - Awaiting AI calling agent integration');
-    
-    if (!webhookUrl) {
-      console.log('⚠️ Webhook URL not configured yet');
-      setWebhookStatus('Local emergency mode - AI calling agent not yet connected');
-      return { success: true, mode: 'local' };
-    }
+    setWebhookStatus('Initiating AI Medical Triage Call...');
     
     try {
-      const response = await fetch(webhookUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(emergencyData)
-      });
+      // Initiate Vapi AI call using Web SDK
+      const vapiCallResult = await initiateVapiWebCall(emergencyData);
       
-      console.log('📡 Webhook Response Status:', response.status);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+      if (vapiCallResult.success) {
+        setWebhookStatus('AI Triage Agent Connected - Call in progress');
+        return { success: true };
+      } else {
+        throw new Error(vapiCallResult.error || 'Failed to initiate call');
       }
-      
-      const result = await response.json();
-      console.log('✅ Emergency dispatched successfully:', result);
-      setEmergencyResponse(result);
-      setWebhookStatus('AI calling agent activated!');
-      return result;
     } catch (error) {
-      console.error('❌ Error sending emergency alert:', error);
+      console.error('❌ Error initiating AI call:', error);
       setWebhookStatus(`Error: ${error.message}`);
       return { success: false, error: error.message };
     }
   };
 
+  // Initiate Vapi AI Medical Triage Call using Web SDK
+  const initiateVapiWebCall = async (emergencyData) => {
+    if (!vapiRef.current) {
+      return {
+        success: false,
+        error: 'Vapi client not initialized'
+      };
+    }
+
+    try {
+      console.log('🚀 Starting Vapi call...');
+      setVapiCallStatus('initiating');
+
+      // Set up event listeners on the client BEFORE starting the call
+      vapiRef.current.on('call-start', () => {
+        console.log('📞 Vapi call started');
+        setVapiCallStatus('connected');
+        setWebhookStatus('AI Medical Triage call in progress...');
+      });
+
+      vapiRef.current.on('call-end', () => {
+        console.log('📞 Vapi call ended');
+        setVapiCallStatus('ended');
+        setWebhookStatus('AI Triage call completed');
+        activeCallRef.current = null;
+      });
+
+      vapiRef.current.on('speech-start', () => {
+        console.log('🎤 Patient started speaking');
+      });
+
+      vapiRef.current.on('speech-end', () => {
+        console.log('🎤 Patient stopped speaking');
+      });
+
+      vapiRef.current.on('error', (error) => {
+        console.error('❌ Vapi error:', error);
+        setVapiCallStatus('error');
+        setWebhookStatus(`Call error: ${error.message}`);
+        activeCallRef.current = null;
+      });
+
+      vapiRef.current.on('message', (message) => {
+        console.log('💬 Vapi message:', message);
+      });
+
+      // Start the call - this may or may not return a call instance
+      const call = await vapiRef.current.start({
+        agent: {
+          id: VAPI_ASSISTANT_ID
+        },
+        transcriber: {
+          provider: 'deepgram',
+          model: 'nova-2',
+          language: 'en'
+        },
+        // Pass emergency context to the assistant
+        metadata: {
+          patientName: emergencyData.patientInfo.name,
+          emergencyType: emergencyData.emergency.type,
+          symptoms: emergencyData.emergency.symptoms.join(', '),
+          severity: emergencyData.emergency.severity,
+          location: emergencyData.location.address,
+          coordinates: `${emergencyData.location.latitude}, ${emergencyData.location.longitude}`,
+          vitalSigns: JSON.stringify(emergencyData.vitalSigns),
+          aiAssessment: emergencyData.aiAssessment,
+          timestamp: emergencyData.emergency.timestamp
+        }
+      });
+
+      // Store the call instance if returned
+      if (call) {
+        activeCallRef.current = call;
+      }
+
+      console.log('✅ Vapi web call initiated successfully');
+      return {
+        success: true
+      };
+
+    } catch (error) {
+      console.error('❌ Vapi web call error:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  };
+
+  // Stop Vapi call
+  const stopVapiCall = () => {
+    if (vapiRef.current) {
+      console.log('🛑 Ending Vapi AI conversation...');
+      vapiRef.current.stop();
+      setVapiCallStatus('ended');
+      setStatus('dispatched');
+      setTranscript('AI conversation ended. Emergency services have been notified.');
+      activeCallRef.current = null;
+    }
+  };
+
   const handleSOS = () => {
     setStatus('listening');
-    setTranscript('MediSurge AI: Listening... Please describe your emergency.');
+    setTranscript('🤖 MediSurge AI Agent is connecting...');
     setIsListening(true);
     
-    // Start voice recognition
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.start();
-      } catch (error) {
-        console.error('Error starting recognition:', error);
-        // Fallback to demo mode if speech recognition fails
-        setTimeout(() => {
-          setUserSpeech('My father is having chest pains');
-          analyzeEmergency('My father is having chest pains and difficulty breathing');
-        }, 2000);
+    // Directly start Vapi AI call for voice conversation
+    startVapiConversation();
+  };
+
+  // Start Vapi AI conversation directly
+  const startVapiConversation = async () => {
+    if (!vapiRef.current) {
+      setTranscript('Error: AI Agent not initialized');
+      setTimeout(() => setStatus('idle'), 2000);
+      return;
+    }
+
+    try {
+      console.log('🚀 Starting Vapi AI conversation...');
+      setVapiCallStatus('connecting');
+      setTranscript('🤖 AI Medical Triage Agent is connecting...');
+
+      // Set up event listeners on the client BEFORE starting the call
+      vapiRef.current.on('call-start', () => {
+        console.log('📞 Vapi call started - AI is now speaking');
+        setVapiCallStatus('connected');
+        setStatus('processing'); // Change to processing state
+        setTranscript('🎤 AI Agent connected! Speak naturally, the AI will guide you.');
+        setIsListening(false); // Not using local recognition anymore
+      });
+
+      vapiRef.current.on('call-end', () => {
+        console.log('📞 Vapi call ended');
+        setVapiCallStatus('ended');
+        setStatus('dispatched');
+        setTranscript('Call completed. Emergency services dispatched.');
+        activeCallRef.current = null;
+      });
+
+      vapiRef.current.on('speech-start', () => {
+        console.log('🎤 Patient started speaking');
+        setTranscript('🎤 You are speaking...');
+      });
+
+      vapiRef.current.on('speech-end', () => {
+        console.log('🎤 Patient stopped speaking - AI is processing');
+        setTranscript('🤖 AI is responding...');
+      });
+
+      vapiRef.current.on('error', (error) => {
+        console.error('❌ Vapi error:', error);
+        setVapiCallStatus('error');
+        setTranscript(`Error: ${error.message}`);
+        setStatus('idle');
+        activeCallRef.current = null;
+      });
+
+      vapiRef.current.on('message', (message) => {
+        console.log('💬 Vapi message:', message);
+        // Display AI responses in transcript
+        if (message.type === 'transcript' && message.transcriptType === 'final') {
+          if (message.role === 'assistant') {
+            setTranscript(`🤖 AI: ${message.transcript}`);
+          } else if (message.role === 'user') {
+            setTranscript(`👤 You: ${message.transcript}`);
+          }
+        }
+      });
+
+      // Start the call with assistant ID as first parameter
+      const call = await vapiRef.current.start(VAPI_ASSISTANT_ID, {
+        transcriber: {
+          provider: 'deepgram',
+          model: 'nova-2',
+          language: 'en'
+        },
+        // Pass patient context to the AI assistant
+        metadata: {
+          patientLocation: patientLocation.address,
+          coordinates: `${patientLocation.lat}, ${patientLocation.lng}`,
+          timestamp: new Date().toISOString(),
+          emergencyType: 'SOS Button Pressed',
+          vitalSigns: {
+            heartRate: 82,
+            bloodPressure: '140/90',
+            oxygenLevel: 94
+          }
+        }
+      });
+
+      // Store the call instance if returned
+      if (call) {
+        activeCallRef.current = call;
       }
-    } else {
-      // Fallback demo mode for browsers without speech recognition
-      setTimeout(() => {
-        setUserSpeech('My father is having chest pains');
-        setTranscript('User: My father is having chest pains');
-        analyzeEmergency('My father is having chest pains and difficulty breathing');
-      }, 2000);
+
+      console.log('✅ Vapi AI conversation started');
+
+    } catch (error) {
+      console.error('❌ Error starting Vapi conversation:', error);
+      setVapiCallStatus('error');
+      
+      let errorMessage = 'Failed to connect AI Agent';
+      
+      // Check for authentication errors
+      if (error.status === 401 || error.message?.includes('401') || error.message?.includes('Unauthorized')) {
+        errorMessage = '🔑 Invalid Vapi Credentials';
+        console.error('\n' + '='.repeat(60));
+        console.error('🚨 AUTHENTICATION ERROR - ACTION REQUIRED:');
+        console.error('='.repeat(60));
+        console.error('1. Go to: https://dashboard.vapi.ai/settings');
+        console.error('2. Copy your PUBLIC KEY (Web SDK Key)');
+        console.error('3. Update .env file: VITE_VAPI_PUBLIC_KEY=your_actual_key');
+        console.error('4. Restart dev server: npm run dev');
+        console.error('='.repeat(60) + '\n');
+        setTranscript('⚠️ Setup Required: Update VAPI_PUBLIC_KEY in .env file. See console for instructions.');
+      } else if (error.message?.includes('fetch')) {
+        errorMessage = 'Network error - Check your Vapi credentials';
+        setTranscript(`⚠️ ${errorMessage}. See console for details.`);
+      } else if (error.message) {
+        errorMessage = error.message;
+        setTranscript(`⚠️ ${errorMessage}`);
+      } else {
+        setTranscript(`⚠️ ${errorMessage}. Please check console for details.`);
+      }
+      
+      setStatus('idle');
+      
+      // Log detailed error for debugging
+      console.error('Vapi Error Details:', {
+        publicKey: VAPI_PUBLIC_KEY?.substring(0, 20) + '...',
+        assistantId: VAPI_ASSISTANT_ID?.substring(0, 20) + '...',
+        isPlaceholder: VAPI_PUBLIC_KEY === 'your_public_key_here',
+        error: error
+      });
     }
   };
 
@@ -326,7 +597,7 @@ const PatientPortal = () => {
               </div>
             )}
 
-            {/* --- SCREEN 2: ACTIVE --- */}
+            {/* --- SCREEN 2: AI CONVERSATION ACTIVE --- */}
             {(status === 'listening' || status === 'processing') && (
               <div className="flex-1 flex flex-col items-center justify-center p-6 bg-gray-900/50">
                  <div className="w-24 h-24 rounded-full border-2 border-neon-teal flex items-center justify-center mb-8 relative">
@@ -334,15 +605,38 @@ const PatientPortal = () => {
                     <div className="absolute inset-0 border-4 border-neon-teal/20 rounded-full animate-ping"></div>
                  </div>
                  <h3 className="text-xl font-bold mb-4">
-                   {status === 'listening' ? '🎤 Speak Now...' : '⚡ Analyzing...'}
+                   {status === 'listening' ? '🤖 AI Agent Connecting...' : '🎤 AI Conversation Active'}
                  </h3>
-                 <div className="bg-black/50 p-4 rounded-lg w-full border border-white/10 min-h-[80px] mb-8">
-                    <p className="text-neon-teal font-mono text-sm">{transcript}</p>
-                    {isListening && (
-                      <p className="text-gray-500 text-xs mt-2 animate-pulse">Microphone active - Listening...</p>
+                 <div className="bg-black/50 p-4 rounded-lg w-full border border-white/10 min-h-[120px] mb-4">
+                    <p className="text-neon-teal font-mono text-sm leading-relaxed">{transcript}</p>
+                    {vapiCallStatus === 'connected' && (
+                      <div className="flex items-center gap-2 mt-3">
+                        <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                        <p className="text-green-400 text-xs">Live AI conversation - Speak naturally</p>
+                      </div>
+                    )}
+                    {vapiCallStatus === 'connecting' && (
+                      <p className="text-yellow-400 text-xs mt-2 animate-pulse">Connecting to AI Medical Triage...</p>
                     )}
                  </div>
-                 <VoiceWave active={status === 'listening'} />
+                 
+                 {/* End Call Button - Always visible during conversation */}
+                 {vapiCallStatus === 'connected' && (
+                   <button 
+                     onClick={stopVapiCall}
+                     className="bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-8 rounded-full mb-4 transition-all shadow-lg shadow-red-500/50"
+                   >
+                     ⏹ End AI Call
+                   </button>
+                 )}
+                 
+                 <VoiceWave active={vapiCallStatus === 'connected'} />
+                 
+                 <div className="mt-6 text-center text-gray-400 text-xs max-w-[280px]">
+                   <p>The AI agent will ask you questions about your emergency.</p>
+                   <p className="mt-1">Speak clearly and provide detailed information.</p>
+                   <p className="mt-2 text-neon-teal">The conversation continues until the AI has all needed information.</p>
+                 </div>
               </div>
             )}
 
@@ -356,6 +650,11 @@ const PatientPortal = () => {
                     <div className="mt-3 text-xs text-gray-400 bg-black/30 p-2 rounded">
                       Hospital notified • Ambulance ID: AMB-{Math.floor(Math.random() * 1000)}
                     </div>
+                    {vapiCallStatus && (
+                      <div className="mt-2 text-[10px] text-purple-400 bg-purple-500/10 p-2 rounded border border-purple-500/20 animate-pulse">
+                        📞 AI Medical Triage: {vapiCallStatus === 'connected' ? 'Call Active' : 'Initiating...'}
+                      </div>
+                    )}
                     {webhookStatus && (
                       <div className="mt-2 text-[10px] text-neon-teal bg-neon-teal/10 p-2 rounded border border-neon-teal/20">
                         🔗 {webhookStatus}
@@ -387,6 +686,16 @@ const PatientPortal = () => {
                  </div>
                  
                  <button onClick={() => setStatus('idle')} className="mt-4 py-4 w-full bg-gray-800 rounded-xl font-bold hover:bg-gray-700">Cancel / Resolved</button>
+                 
+                 {/* End Call Button (if Vapi call is active) */}
+                 {(vapiCallStatus === 'connected' || vapiCallStatus === 'initiating') && (
+                   <button 
+                     onClick={stopVapiCall}
+                     className="mt-2 py-3 w-full bg-red-500/20 border border-red-500 text-red-400 rounded-xl font-bold hover:bg-red-500 hover:text-white transition-colors"
+                   >
+                     End AI Triage Call
+                   </button>
+                 )}
               </div>
             )}
 
@@ -421,23 +730,28 @@ const PatientPortal = () => {
          <Link to="/dashboard" className="text-gray-500 text-xs font-mono hover:text-white transition-colors">
             [ RETURN TO COMMAND CENTER ]
          </Link>
-         <p className="text-[10px] text-gray-700 mt-2">MediSurge Mobile Simulation v1.0 • Connected to Hospital Portal</p>
+         <p className="text-[10px] text-gray-700 mt-2">MediSurge Mobile Simulation v1.0 • AI Medical Triage Active</p>
          
          {/* Debug Info */}
          {webhookStatus && (
            <div className={`mt-3 border rounded-lg p-2 text-left ${
-             webhookStatus.includes('Error') || webhookStatus.includes('500') 
+             webhookStatus.includes('Error') || webhookStatus.includes('Failed') 
                ? 'bg-red-500/10 border-red-500/30' 
                : 'bg-neon-teal/10 border-neon-teal/30'
            }`}>
              <div className={`text-[10px] font-mono ${
                webhookStatus.includes('Error') ? 'text-red-400' : 'text-neon-teal'
              }`}>
-               🔗 WEBHOOK: {webhookStatus}
+               {vapiCallStatus === 'connected' ? '📞' : '🔗'} STATUS: {webhookStatus}
              </div>
+             {vapiCallStatus && (
+               <div className="text-[9px] text-purple-400 mt-1">
+                 🤖 Vapi AI Agent: {vapiCallStatus}
+               </div>
+             )}
              {webhookStatus.includes('Error') && (
                <div className="text-[9px] text-yellow-400 mt-1">
-                 ⚠️ Check your n8n workflow - it may need to be activated or the endpoint might have an issue
+                 ⚠️ Check Vapi API configuration and phone number format
                </div>
              )}
              {emergencyResponse && (
