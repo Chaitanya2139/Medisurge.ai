@@ -4,7 +4,7 @@
  */
 
 // Configuration
-const N8N_WEBHOOK_URL = 'https://vaibhavopps22.app.n8n.cloud/webhook/patient-surge-prediction';
+const N8N_WEBHOOK_URL = 'https://vaibhavopps22.app.n8n.cloud/webhook/environmental-prediction';
 
 /**
  * Fetch comprehensive weather and environmental data
@@ -48,20 +48,24 @@ export const fetchWeatherPredictions = async (location = { lat: 28.7041, lng: 77
     });
 
     if (!response.ok) {
+      console.warn(`⚠️ n8n webhook returned ${response.status}. Using mock data.`);
+      console.warn('This is normal if the n8n workflow is not configured yet.');
       throw new Error(`HTTP error! status: ${response.status}`);
     }
 
     const result = await response.json();
-    console.log('✅ Weather predictions received:', result);
+    console.log('✅ Weather predictions received from n8n:', result);
 
     return {
       success: true,
       data: result,
-      processedAt: new Date().toISOString()
+      processedAt: new Date().toISOString(),
+      mode: 'live'
     };
 
   } catch (error) {
-    console.error('❌ Error fetching weather predictions:', error);
+    console.log('📊 Using mock data for predictions');
+    console.log('💡 To use live data, configure the n8n workflow at:', N8N_WEBHOOK_URL);
     
     // Return mock data for development/testing
     return getMockPredictionData(location);

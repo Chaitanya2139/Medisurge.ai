@@ -62,8 +62,21 @@ const WeatherPredictionDashboard = () => {
             </p>
           )}
           {predictions?.mode === 'mock' && (
-            <div className="mt-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 text-sm text-yellow-400">
-              ⚠️ Using mock data - n8n webhook will provide real-time data
+            <div className="mt-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4 text-sm">
+              <div className="flex items-center gap-2 mb-2">
+                <AlertTriangle className="text-yellow-400" size={16} />
+                <span className="text-yellow-400 font-bold">Using Mock Data</span>
+              </div>
+              <p className="text-yellow-300/80 text-xs">
+                n8n webhook not responding (500 error). This is normal if the workflow isn't configured yet.
+                The dashboard will automatically switch to live data once the workflow is ready.
+              </p>
+            </div>
+          )}
+          {predictions?.mode === 'live' && (
+            <div className="mt-3 bg-green-500/10 border border-green-500/30 rounded-lg p-3 text-sm text-green-400 flex items-center gap-2">
+              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+              Connected to live n8n environmental data
             </div>
           )}
         </div>
